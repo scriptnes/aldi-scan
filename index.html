@@ -6,6 +6,8 @@
     <title>Складов скенер</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.0.4/dist/mobilenet.min.js"></script>
     <style>
         body {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -289,6 +291,9 @@
             compassDirection: 0,
             sessionHistory: [],
             currentPosition: { x: 5, y: 5 },
+            model: null,
+            modelLoaded: false,
+            isBinaryModel: true, // Вашият модел е binary classification
             warehouseData: {
                 zones: [
                     { name: 'A1', coordinates: { x: 10, y: 20 } },
@@ -299,14 +304,15 @@
                     { name: 'C2', coordinates: { x: 30, y: 60 } }
                 ],
                 products: [
-                    { name: 'Лаптоп Dell', barcode: '1234567890', zone: 'A1', coordinates: { x: 10, y: 20 } },
-                    { name: 'Мишка Logitech', barcode: '2345678901', zone: 'A2', coordinates: { x: 30, y: 20 } },
-                    { name: 'Клавиатура Razer', barcode: '3456789012', zone: 'B1', coordinates: { x: 10, y: 40 } },
-                    { name: 'Монитор Samsung', barcode: '4567890123', zone: 'B2', coordinates: { x: 30, y: 40 } },
-                    { name: 'Принтер HP', barcode: '5678901234', zone: 'C1', coordinates: { x: 10, y: 60 } },
-                    { name: 'Скенер Canon', barcode: '6789012345', zone: 'C2', coordinates: { x: 30, y: 60 } }
+                    { id: 'laptop_dell_123', name: 'Лаптоп Dell', barcode: '1234567890', zone: 'A1', coordinates: { x: 10, y: 20 } },
+                    { id: 'mouse_logitech_456', name: 'Мишка Logitech', barcode: '2345678901', zone: 'A2', coordinates: { x: 30, y: 20 } },
+                    { id: 'keyboard_razer_789', name: 'Клавиатура Razer', barcode: '3456789012', zone: 'B1', coordinates: { x: 10, y: 40 } },
+                    { id: 'monitor_samsung_101', name: 'Монитор Samsung', barcode: '4567890123', zone: 'B2', coordinates: { x: 30, y: 40 } },
+                    { id: 'printer_hp_112', name: 'Принтер HP', barcode: '5678901234', zone: 'C1', coordinates: { x: 10, y: 60 } },
+                    { id: 'scanner_canon_131', name: 'Скенер Canon', barcode: '6789012345', zone: 'C2', coordinates: { x: 30, y: 60 } }
                 ]
-            }
+            },
+            classLabels: ['detected_product'] // Binary модел - детектира продукт или не
         };
 
         // DOM елементи
@@ -385,7 +391,6 @@
             elements.compassNeedle.style.transform = `translateX(-50%) rotate(${appState.compassDirection}deg)`;
             document.getElementById('targetZoneName').textContent = appState.targetZone.name;
             
-            // Обновяваме текста за посоката
             const angle = appState.compassDirection;
             let directionText = '';
             
@@ -463,11 +468,40 @@
         }
 
         async function loadMachineLearningModel() {
-            return new Promise(resolve => {
-                setTimeout(() => {
-                    resolve();
-                }, 2000);
-            });
+            elements.loadingMessage.textContent = 'Зарежда AI модел за разпознаване...';
+            
+            try {
+                // Настройваме TensorFlow backend за оптимизация
+                await tf.setBackend('webgl');
+                await tf.ready();
+                console.log('TensorFlow backend:', tf.getBackend());
+                
+                // Опитваме се да заредим custom модел първо
+                try {
+                    appState.model = await tf.loadLayersModel('localstorage://warehouse-model');
+                    appState.modelLoaded = true;
+                    console.log('Зареден custom модел от localStorage');
+                } catch {
+                    // Ако няма custom модел, опитваме се да заредим от сървър
+                    try {
+                        appState.model = await tf.loadLayersModel('./models/warehouse-model.json');
+                        appState.modelLoaded = true;
+                        // Кешираме локално за следващия път
+                        await appState.model.save('localstorage://warehouse-model');
+                        console.log('Зареден custom модел от сървър');
+                    } catch (error) {
+                        console.log('Не може да се зареди custom модел:', error.message);
+                        // Ако няма custom модел, използваме MobileNet като fallback
+                        appState.model = await mobilenet.load();
+                        appState.modelLoaded = false;
+                        console.log('Зареден MobileNet модел (fallback)');
+                    }
+                }
+                
+            } catch (error) {
+                console.error('Грешка при зареждане на модела:', error);
+                throw error;
+            }
         }
 
         async function loadWarehouseData() {
@@ -567,6 +601,120 @@
             updateStatus('Камерата е спряна');
         }
 
+        // ML функции за разпознаване
+        function preprocessImage(imageElement) {
+            return tf.tidy(() => {
+                const tensor = tf.browser.fromPixels(imageElement);
+                const resized = tf.image.resizeBilinear(tensor, [224, 224]);
+                const normalized = resized.div(255.0);
+                const batched = normalized.expandDims(0);
+                return batched;
+            });
+        }
+
+        async function predictProduct(imageElement) {
+            if (!appState.model) {
+                console.error('Моделът не е зареден');
+                return null;
+            }
+
+            let preprocessed = null;
+            try {
+                preprocessed = preprocessImage(imageElement);
+                
+                if (appState.modelLoaded) {
+                    if (appState.isBinaryModel) {
+                        // Binary classification модел (1 изход)
+                        const prediction = await appState.model.predict(preprocessed).data();
+                        const confidence = prediction[0];
+                        
+                        console.log('Binary prediction confidence:', confidence);
+                        
+                        if (confidence > 0.7) {
+                            // Връщаме случаен продукт от базата данни
+                            const randomIndex = Math.floor(Math.random() * appState.warehouseData.products.length);
+                            const product = appState.warehouseData.products[randomIndex];
+                            
+                            return {
+                                productId: product.id,
+                                confidence: confidence,
+                                product: product
+                            };
+                        }
+                    } else {
+                        // Multi-class модел (множество изходи)
+                        const predictions = await appState.model.predict(preprocessed).data();
+                        const maxIndex = predictions.indexOf(Math.max(...predictions));
+                        const confidence = predictions[maxIndex];
+                        
+                        console.log('Multi-class prediction confidence:', confidence);
+                        
+                        if (confidence > 0.7) {
+                            const productId = appState.classLabels[maxIndex];
+                            const product = appState.warehouseData.products.find(p => p.id === productId);
+                            
+                            return {
+                                productId: productId,
+                                confidence: confidence,
+                                product: product
+                            };
+                        }
+                    }
+                } else {
+                    // Fallback: използваме MobileNet за общо разпознаване
+                    const predictions = await appState.model.classify(imageElement);
+                    console.log('MobileNet predictions:', predictions);
+                    
+                    const mappedProduct = mapMobileNetToProduct(predictions);
+                    if (mappedProduct) {
+                        return {
+                            productId: mappedProduct.id,
+                            confidence: predictions[0].probability,
+                            product: mappedProduct
+                        };
+                    }
+                }
+                
+                return null;
+                
+            } catch (error) {
+                console.error('Грешка при prediction:', error);
+                return null;
+            } finally {
+                if (preprocessed) {
+                    preprocessed.dispose();
+                }
+            }
+        }
+
+        function mapMobileNetToProduct(predictions) {
+            const mappings = {
+                'laptop': 'laptop_dell_123',
+                'computer': 'laptop_dell_123',
+                'notebook': 'laptop_dell_123',
+                'mouse': 'mouse_logitech_456',
+                'computer mouse': 'mouse_logitech_456',
+                'keyboard': 'keyboard_razer_789',
+                'computer keyboard': 'keyboard_razer_789',
+                'monitor': 'monitor_samsung_101',
+                'screen': 'monitor_samsung_101',
+                'printer': 'printer_hp_112',
+                'scanner': 'scanner_canon_131'
+            };
+            
+            for (const prediction of predictions) {
+                const className = prediction.className.toLowerCase();
+                
+                for (const [key, productId] of Object.entries(mappings)) {
+                    if (className.includes(key) && prediction.probability > 0.3) {
+                        return appState.warehouseData.products.find(p => p.id === productId);
+                    }
+                }
+            }
+            
+            return null;
+        }
+
         async function scanProduct() {
             if (!appState.showCamera) return;
             
@@ -578,16 +726,13 @@
                 elements.canvas.height = elements.video.videoHeight;
                 ctx.drawImage(elements.video, 0, 0);
                 
-                // Създаваме временен img елемент за ML модела
+                // Създаваме временен canvas за ML модела
                 const tempCanvas = document.createElement('canvas');
                 const tempCtx = tempCanvas.getContext('2d');
                 tempCanvas.width = 224;
                 tempCanvas.height = 224;
-                
-                // Resize изображението до 224x224 за модела
                 tempCtx.drawImage(elements.video, 0, 0, 224, 224);
                 
-                // Правим prediction
                 const prediction = await predictProduct(tempCanvas);
                 
                 if (prediction && prediction.product) {
@@ -611,21 +756,6 @@
             } finally {
                 setLoading(false);
             }
-        }
-
-        async function recognizeProduct() {
-            return new Promise(resolve => {
-                setTimeout(() => {
-                    const randomIndex = Math.floor(Math.random() * appState.warehouseData.products.length);
-                    const product = appState.warehouseData.products[randomIndex];
-                    
-                    if (Math.random() > 0.2) {
-                        resolve(product);
-                    } else {
-                        resolve(null);
-                    }
-                }, 2000);
-            });
         }
 
         function saveSessionHistory() {
