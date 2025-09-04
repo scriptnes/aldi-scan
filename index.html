@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Складов скенер</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        .scanner-container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+        }
+        
+        .video-container {
+            position: relative;
+            border-radius: 15px;
+            overflow: hidden;
+            background: #000;
+            min-height: 300px;
+        }
+        
+        #video {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+            z-index: 10;
+        }
+        
+        .scan-frame {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 200px;
+            height: 200px;
+            border: 3px solid #00ff00;
+            border-radius: 15px;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 0.6; transform: translate(-50%, -50%) scale(0.95); }
+            50% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
+            100% { opacity: 0.6; transform: translate(-50%, -50%) scale(0.95); }
+        }
+        
+        .direction-indicator {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 123, 255, 0.9);
+            color: white;
+            padding: 15px 25px;
+            border-radius: 25px;
+            z-index: 1000;
+            font-weight: bold;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            display: none;
+        }
+        
+        .zone-info {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            border-radius: 15px;
+            color: white;
+            padding: 20px;
+            margin: 15px 0;
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.3);
+            display: none;
+        }
+        
+        .product-card {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 10px 0;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+            border-left: 4px solid #007bff;
+        }
+        
+        .offline-indicator {
+            position: absolute;
+            top: 0;
+            right: 0;
+            background: #dc3545;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 20px;
+            z-index: 1000;
+            font-size: 14px;
+        }
+        
+        .online-indicator {
+            background: #28a745;
+        }
+        
+        .loading-spinner {
+            text-align: center;
+            padding: 40px;
+            display: none;
+        }
+        
+        .compass {
+            width: 100px;
+            height: 100px;
+            margin: 0 auto 20px;
+            position: relative;
+            border-radius: 50%;
+            background: conic-gradient(from 0deg, #ff6b6b, #4ecdc4, #45b7d1, #96ceb4, #ffeaa7, #fd79a8, #ff6b6b);
+            display: none;
+        }
+        
+        .compass-needle {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            width: 4px;
+            height: 40px;
+            background: #fff;
+            transform-origin: bottom center;
+            border-radius: 2px;
+            transition: transform 0.3s ease;
+        }
+        
+        .session-history {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 25px;
+            padding: 12px 30px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="container mt-4">
+            <div class="row justify-content-center">
+                <div class="col-md-8">
+                    <div class="scanner-container p-4">
+                        <h1 class="text-center mb-4">
+                            <i class="fas fa-warehouse text-primary"></i>
+                            Складов скенер
+                        </h1>
+                        
+                        <!-- Индикатор за посока -->
+                        <div id="directionIndicator" class="direction-indicator">
+                            <i class="fas fa-compass me-2"></i>
+                            <span id="directionText">Движете се право напред</span>
+                        </div>
+                        
+                        <!-- Статус на приложението -->
+                        <div class="row mb-4">
+                            <div class="col-md-6">
+                                <div class="alert alert-info">
+                                    <i class="fas fa-info-circle"></i>
+                                    Статус: <span id="appStatus">Готово за работа</span>
+                                </div>
+                            </div>
+                            <div class="col-md-6 position-relative">
+                                <div id="onlineStatus" class="offline-indicator online-indicator">
+                                    <i class="fas fa-wifi"></i>
+                                    Онлайн
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Камера -->
+                        <div id="videoContainer" class="video-container mb-4 hidden">
+                            <video id="video" autoplay playsinline></video>
+                            <canvas id="canvas" style="display: none;"></canvas>
+                            <div class="overlay">
+                                <div class="scan-frame"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- Зареждане -->
+                        <div id="loadingSpinner" class="loading-spinner">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Зарежда...</span>
+                            </div>
+                            <p class="mt-3" id="loadingMessage">Инициализира се приложението...</p>
+                        </div>
+                        
+                        <!-- Компас за ориентация -->
+                        <div id="compassContainer" class="text-center mb-4">
+                            <div class="compass">
+                                <div id="compassNeedle" class="compass-needle" style="transform: translateX(-50%) rotate(0deg);"></div>
+                            </div>
+                            <p><strong>Посока към зона <span id="targetZoneName">A1</span></strong></p>
+                        </div>
+                        
+                        <!-- Информация за разпознат продукт -->
+                        <div id="productInfo" class="zone-info">
+                            <h3><i class="fas fa-box"></i> Разпознат продукт</h3>
+                            <p><strong>Продукт:</strong> <span id="productName">-</span></p>
+                            <p><strong>Баркод:</strong> <span id="productBarcode">-</span></p>
+                            <p><strong>Зона:</strong> <span id="productZone">-</span></p>
+                            <p><strong>Координати:</strong> X: <span id="productX">-</span>, Y: <span id="productY">-</span></p>
+                        </div>
+                        
+                        <!-- Контроли -->
+                        <div class="row mb-4">
+                            <div class="col-md-4">
+                                <button id="startCameraBtn" class="btn btn-primary w-100">
+                                    <i class="fas fa-camera"></i>
+                                    Стартирай камера
+                                </button>
+                            </div>
+                            <div class="col-md-4">
+                                <button id="scanBtn" class="btn btn-success w-100" disabled>
+                                    <i class="fas fa-search"></i>
+                                    Сканирай
+                                </button>
+                            </div>
+                            <div class="col-md-4">
+                                <button id="stopCameraBtn" class="btn btn-danger w-100" disabled>
+                                    <i class="fas fa-stop"></i>
+                                    Спри камера
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- История на сесията -->
+                        <div class="mb-4">
+                            <h4><i class="fas fa-history"></i> История на сесията</h4>
+                            <div class="session-history" id="sessionHistory">
+                                <div class="text-center text-muted py-3">
+                                    <i class="fas fa-inbox fa-2x"></i>
+                                    <p>Няма сканирани продукти в тази сесия</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Бутон за изчистване на история -->
+                        <button id="clearHistoryBtn" class="btn btn-outline-danger">
+                            <i class="fas fa-trash"></i>
+                            Изчисти история
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Глобални променливи
+        let appState = {
+            showCamera: false,
+            loading: false,
+            isOnline: navigator.onLine,
+            recognizedProduct: null,
+            targetZone: null,
+            orientation: null,
+            compassDirection: 0,
+            sessionHistory: [],
+            currentPosition: { x: 5, y: 5 },
+            warehouseData: {
+                zones: [
+                    { name: 'A1', coordinates: { x: 10, y: 20 } },
+                    { name: 'A2', coordinates: { x: 30, y: 20 } },
+                    { name: 'B1', coordinates: { x: 10, y: 40 } },
+                    { name: 'B2', coordinates: { x: 30, y: 40 } },
+                    { name: 'C1', coordinates: { x: 10, y: 60 } },
+                    { name: 'C2', coordinates: { x: 30, y: 60 } }
+                ],
+                products: [
+                    { name: 'Лаптоп Dell', barcode: '1234567890', zone: 'A1', coordinates: { x: 10, y: 20 } },
+                    { name: 'Мишка Logitech', barcode: '2345678901', zone: 'A2', coordinates: { x: 30, y: 20 } },
+                    { name: 'Клавиатура Razer', barcode: '3456789012', zone: 'B1', coordinates: { x: 10, y: 40 } },
+                    { name: 'Монитор Samsung', barcode: '4567890123', zone: 'B2', coordinates: { x: 30, y: 40 } },
+                    { name: 'Принтер HP', barcode: '5678901234', zone: 'C1', coordinates: { x: 10, y: 60 } },
+                    { name: 'Скенер Canon', barcode: '6789012345', zone: 'C2', coordinates: { x: 30, y: 60 } }
+                ]
+            }
+        };
+
+        // DOM елементи
+        const elements = {
+            video: document.getElementById('video'),
+            canvas: document.getElementById('canvas'),
+            videoContainer: document.getElementById('videoContainer'),
+            loadingSpinner: document.getElementById('loadingSpinner'),
+            loadingMessage: document.getElementById('loadingMessage'),
+            appStatus: document.getElementById('appStatus'),
+            onlineStatus: document.getElementById('onlineStatus'),
+            productInfo: document.getElementById('productInfo'),
+            directionIndicator: document.getElementById('directionIndicator'),
+            compassContainer: document.getElementById('compassContainer'),
+            compassNeedle: document.getElementById('compassNeedle'),
+            sessionHistory: document.getElementById('sessionHistory'),
+            startCameraBtn: document.getElementById('startCameraBtn'),
+            scanBtn: document.getElementById('scanBtn'),
+            stopCameraBtn: document.getElementById('stopCameraBtn'),
+            clearHistoryBtn: document.getElementById('clearHistoryBtn')
+        };
+
+        // Функции за UI
+        function setLoading(loading, message = '') {
+            appState.loading = loading;
+            if (loading) {
+                elements.loadingSpinner.style.display = 'block';
+                elements.loadingMessage.textContent = message;
+            } else {
+                elements.loadingSpinner.style.display = 'none';
+            }
+        }
+
+        function updateStatus(status) {
+            elements.appStatus.textContent = status;
+        }
+
+        function updateOnlineStatus() {
+            if (appState.isOnline) {
+                elements.onlineStatus.innerHTML = '<i class="fas fa-wifi"></i> Онлайн';
+                elements.onlineStatus.className = 'offline-indicator online-indicator';
+            } else {
+                elements.onlineStatus.innerHTML = '<i class="fas fa-wifi-slash"></i> Офлайн';
+                elements.onlineStatus.className = 'offline-indicator';
+            }
+        }
+
+        function showProductInfo(product) {
+            elements.productInfo.style.display = 'block';
+            document.getElementById('productName').textContent = product.name;
+            document.getElementById('productBarcode').textContent = product.barcode;
+            document.getElementById('productZone').textContent = product.zone;
+            document.getElementById('productX').textContent = product.coordinates.x;
+            document.getElementById('productY').textContent = product.coordinates.y;
+        }
+
+        function hideProductInfo() {
+            elements.productInfo.style.display = 'none';
+        }
+
+        function showDirection(show) {
+            elements.directionIndicator.style.display = show ? 'block' : 'none';
+            elements.compassContainer.style.display = show ? 'block' : 'none';
+        }
+
+        function updateDirection() {
+            if (!appState.targetZone || !appState.orientation) return;
+            
+            const deltaX = appState.targetZone.coordinates.x - appState.currentPosition.x;
+            const deltaY = appState.targetZone.coordinates.y - appState.currentPosition.y;
+            const targetAngle = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
+            
+            const deviceHeading = appState.orientation.alpha || 0;
+            appState.compassDirection = targetAngle - deviceHeading;
+            
+            elements.compassNeedle.style.transform = `translateX(-50%) rotate(${appState.compassDirection}deg)`;
+            document.getElementById('targetZoneName').textContent = appState.targetZone.name;
+            
+            // Обновяваме текста за посоката
+            const angle = appState.compassDirection;
+            let directionText = '';
+            
+            if (Math.abs(angle) < 15) {
+                directionText = 'Движете се право напред';
+            } else if (angle > 15 && angle <= 90) {
+                directionText = 'Завъртете се надясно';
+            } else if (angle > 90 && angle <= 180) {
+                directionText = 'Завъртете се назад надясно';
+            } else if (angle < -15 && angle >= -90) {
+                directionText = 'Завъртете се наляво';
+            } else if (angle < -90 && angle >= -180) {
+                directionText = 'Завъртете се назад наляво';
+            } else {
+                directionText = 'Завъртете се назад';
+            }
+            
+            document.getElementById('directionText').textContent = directionText;
+        }
+
+        function addToSessionHistory(product) {
+            const historyItem = {
+                id: Date.now(),
+                product: product.name,
+                barcode: product.barcode,
+                zone: product.zone,
+                time: new Date().toLocaleString('bg-BG'),
+                coordinates: product.coordinates
+            };
+            
+            appState.sessionHistory.unshift(historyItem);
+            renderSessionHistory();
+            saveSessionHistory();
+        }
+
+        function renderSessionHistory() {
+            if (appState.sessionHistory.length === 0) {
+                elements.sessionHistory.innerHTML = `
+                    <div class="text-center text-muted py-3">
+                        <i class="fas fa-inbox fa-2x"></i>
+                        <p>Няма сканирани продукти в тази сесия</p>
+                    </div>
+                `;
+            } else {
+                elements.sessionHistory.innerHTML = appState.sessionHistory.map(item => `
+                    <div class="product-card">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>${item.product}</strong><br>
+                                <small class="text-muted">${item.zone} - ${item.time}</small>
+                            </div>
+                            <span class="badge bg-primary">${item.barcode}</span>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        // Основни функции
+        async function initializeApp() {
+            setLoading(true, 'Инициализира се приложението...');
+            
+            try {
+                await loadMachineLearningModel();
+                await loadWarehouseData();
+                await initializeSensors();
+                
+                updateStatus('Готово за работа');
+            } catch (error) {
+                console.error('Грешка при инициализация:', error);
+                updateStatus('Грешка при инициализация');
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        async function loadMachineLearningModel() {
+            return new Promise(resolve => {
+                setTimeout(() => {
+                    resolve();
+                }, 2000);
+            });
+        }
+
+        async function loadWarehouseData() {
+            elements.loadingMessage.textContent = 'Зарежда данни за склада...';
+            
+            const cachedData = localStorage.getItem('warehouseData');
+            if (cachedData) {
+                appState.warehouseData = JSON.parse(cachedData);
+            }
+            
+            if (appState.isOnline) {
+                localStorage.setItem('warehouseData', JSON.stringify(appState.warehouseData));
+            }
+        }
+
+        async function initializeSensors() {
+            elements.loadingMessage.textContent = 'Инициализира сензори...';
+            
+            if ('DeviceOrientationEvent' in window) {
+                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    try {
+                        const permission = await DeviceOrientationEvent.requestPermission();
+                        if (permission === 'granted') {
+                            startOrientationTracking();
+                        }
+                    } catch (error) {
+                        console.log('Няма разрешение за достъп до ориентацията');
+                    }
+                } else {
+                    startOrientationTracking();
+                }
+            }
+        }
+
+        function startOrientationTracking() {
+            window.addEventListener('deviceorientation', (event) => {
+                appState.orientation = {
+                    alpha: event.alpha,
+                    beta: event.beta,
+                    gamma: event.gamma
+                };
+                
+                if (appState.targetZone) {
+                    updateDirection();
+                }
+            });
+        }
+
+        async function startCamera() {
+            try {
+                setLoading(true, 'Стартира камера...');
+                
+                const constraints = {
+                    video: {
+                        facingMode: 'environment',
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                };
+                
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                elements.video.srcObject = stream;
+                
+                appState.showCamera = true;
+                elements.videoContainer.classList.remove('hidden');
+                elements.startCameraBtn.disabled = true;
+                elements.scanBtn.disabled = false;
+                elements.stopCameraBtn.disabled = false;
+                
+                updateStatus('Камерата е активна');
+            } catch (error) {
+                console.error('Грешка при стартиране на камерата:', error);
+                alert('Не може да се получи достъп до камерата. Моля, проверете разрешенията.');
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        function stopCamera() {
+            if (elements.video.srcObject) {
+                const tracks = elements.video.srcObject.getTracks();
+                tracks.forEach(track => track.stop());
+                elements.video.srcObject = null;
+            }
+            
+            appState.showCamera = false;
+            elements.videoContainer.classList.add('hidden');
+            elements.startCameraBtn.disabled = false;
+            elements.scanBtn.disabled = true;
+            elements.stopCameraBtn.disabled = true;
+            
+            hideProductInfo();
+            showDirection(false);
+            appState.recognizedProduct = null;
+            appState.targetZone = null;
+            
+            updateStatus('Камерата е спряна');
+        }
+
+        async function scanProduct() {
+            if (!appState.showCamera) return;
+            
+            setLoading(true, 'Сканира продукт...');
+            
+            try {
+                const ctx = elements.canvas.getContext('2d');
+                elements.canvas.width = elements.video.videoWidth;
+                elements.canvas.height = elements.video.videoHeight;
+                ctx.drawImage(elements.video, 0, 0);
+                
+                const product = await recognizeProduct();
+                
+                if (product) {
+                    appState.recognizedProduct = product;
+                    appState.targetZone = appState.warehouseData.zones.find(z => z.name === product.zone);
+                    
+                    showProductInfo(product);
+                    showDirection(true);
+                    addToSessionHistory(product);
+                    
+                    updateStatus(`Намерен продукт: ${product.name}`);
+                } else {
+                    updateStatus('Продуктът не е разпознат');
+                    hideProductInfo();
+                    showDirection(false);
+                }
+            } catch (error) {
+                console.error('Грешка при сканиране:', error);
+                updateStatus('Грешка при сканиране');
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        async function recognizeProduct() {
+            return new Promise(resolve => {
+                setTimeout(() => {
+                    const randomIndex = Math.floor(Math.random() * appState.warehouseData.products.length);
+                    const product = appState.warehouseData.products[randomIndex];
+                    
+                    if (Math.random() > 0.2) {
+                        resolve(product);
+                    } else {
+                        resolve(null);
+                    }
+                }, 2000);
+            });
+        }
+
+        function saveSessionHistory() {
+            const sessionId = getSessionId();
+            const sessionData = {
+                id: sessionId,
+                history: appState.sessionHistory,
+                timestamp: Date.now()
+            };
+            
+            localStorage.setItem(`session_${sessionId}`, JSON.stringify(sessionData));
+            localStorage.setItem('currentSession', sessionId);
+        }
+
+        function loadSessionHistory() {
+            const currentSession = localStorage.getItem('currentSession');
+            if (currentSession) {
+                const sessionData = localStorage.getItem(`session_${currentSession}`);
+                if (sessionData) {
+                    const data = JSON.parse(sessionData);
+                    appState.sessionHistory = data.history || [];
+                    renderSessionHistory();
+                }
+            }
+        }
+
+        function getSessionId() {
+            let sessionId = localStorage.getItem('currentSession');
+            if (!sessionId) {
+                sessionId = 'session_' + Date.now();
+                localStorage.setItem('currentSession', sessionId);
+            }
+            return sessionId;
+        }
+
+        function clearHistory() {
+            if (confirm('Сигурни ли сте, че искате да изчистите историята на сесията?')) {
+                appState.sessionHistory = [];
+                renderSessionHistory();
+                
+                const sessionId = getSessionId();
+                localStorage.removeItem(`session_${sessionId}`);
+                localStorage.removeItem('currentSession');
+                
+                updateStatus('Историята е изчистена');
+            }
+        }
+
+        // Event listeners
+        function setupEventListeners() {
+            elements.startCameraBtn.addEventListener('click', startCamera);
+            elements.scanBtn.addEventListener('click', scanProduct);
+            elements.stopCameraBtn.addEventListener('click', stopCamera);
+            elements.clearHistoryBtn.addEventListener('click', clearHistory);
+            
+            window.addEventListener('online', () => {
+                appState.isOnline = true;
+                updateOnlineStatus();
+                updateStatus('Връзката е възстановена');
+            });
+            
+            window.addEventListener('offline', () => {
+                appState.isOnline = false;
+                updateOnlineStatus();
+                updateStatus('Работи в офлайн режим');
+            });
+        }
+
+        // Инициализация при зареждане на страницата
+        document.addEventListener('DOMContentLoaded', function() {
+            updateOnlineStatus();
+            loadSessionHistory();
+            setupEventListeners();
+            initializeApp();
+        });
+    </script>
+</body>
+</html>
