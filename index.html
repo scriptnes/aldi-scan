@@ -570,7 +570,7 @@
         async function scanProduct() {
             if (!appState.showCamera) return;
             
-            setLoading(true, 'Сканира продукт...');
+            setLoading(true, 'Сканира продукт с AI...');
             
             try {
                 const ctx = elements.canvas.getContext('2d');
@@ -578,9 +578,20 @@
                 elements.canvas.height = elements.video.videoHeight;
                 ctx.drawImage(elements.video, 0, 0);
                 
-                const product = await recognizeProduct();
+                // Създаваме временен img елемент за ML модела
+                const tempCanvas = document.createElement('canvas');
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCanvas.width = 224;
+                tempCanvas.height = 224;
                 
-                if (product) {
+                // Resize изображението до 224x224 за модела
+                tempCtx.drawImage(elements.video, 0, 0, 224, 224);
+                
+                // Правим prediction
+                const prediction = await predictProduct(tempCanvas);
+                
+                if (prediction && prediction.product) {
+                    const product = prediction.product;
                     appState.recognizedProduct = product;
                     appState.targetZone = appState.warehouseData.zones.find(z => z.name === product.zone);
                     
@@ -588,15 +599,15 @@
                     showDirection(true);
                     addToSessionHistory(product);
                     
-                    updateStatus(`Намерен продукт: ${product.name}`);
+                    updateStatus(`Намерен продукт: ${product.name} (${Math.round(prediction.confidence * 100)}% сигурност)`);
                 } else {
-                    updateStatus('Продуктът не е разпознат');
+                    updateStatus('Продуктът не е разпознат или сигурността е твърде ниска');
                     hideProductInfo();
                     showDirection(false);
                 }
             } catch (error) {
                 console.error('Грешка при сканиране:', error);
-                updateStatus('Грешка при сканиране');
+                updateStatus('Грешка при сканиране с AI модела');
             } finally {
                 setLoading(false);
             }
